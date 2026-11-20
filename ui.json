@@ -1,0 +1,16 @@
+{
+  "kit": "cyan",
+  "qlinkGroups": "rows",
+  "pages": [{
+    "name": "CONTROL",
+    "controls": [
+      { "param": "Learn Play", "widget": "switch" },
+      { "param": "Learn Stop", "widget": "switch" },
+      { "param": "Learn Play Start", "widget": "switch" },
+      { "widget": "empty" },
+      { "param": "Play CC", "widget": "knob" },
+      { "param": "Stop CC", "widget": "knob" },
+      { "param": "Play Start CC", "widget": "knob" }
+    ]
+  }]
+}

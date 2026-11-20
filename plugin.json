@@ -1,0 +1,14 @@
+{
+  "name": "MIDI Transport",
+  "manufacturer": "Elsewave",
+  "version": "0.1.0",
+  "format": "vst2",
+  "kind": "instrument",
+  "uid": "ELmt",
+  "numInputs": 0,
+  "numOutputs": 2,
+  "category": "Synth",
+  "file32": "VST/midi-transport-arm32.so",
+  "file64": "VST/midi-transport-arm64.so",
+  "description": "Learn MIDI CC assignments for the MPC's Play, Stop, and Play Start controls."
+}
