@@ -31,4 +31,6 @@ exec "$MIDI_TRANSPORT_ZIG" "$@"
 SH
 chmod +x "$compiler"
 "$PYTHON" "$MPC_SDK/tools/build.py" "$project" --target "${1:-all}" --zig "$compiler"
+"$PYTHON" "$project/ui/render_control.py" "$MPC_SDK" "$project"
+"$PYTHON" "$MPC_SDK/tools/validate.py" "$project" --strict
 "$PYTHON" "$MPC_SDK/tools/package.py" "$project"

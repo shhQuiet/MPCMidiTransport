@@ -16,9 +16,11 @@ namespace
 constexpr int kBindingCount = 3;
 constexpr int kChannels = 16;
 constexpr int kControllers = 128;
+constexpr int kMessageRange = kChannels * kControllers;
 constexpr int kUnassigned = 0;
 constexpr int kFirstLearn = 1;
 constexpr int kFirstBinding = kFirstLearn + kBindingCount;
+constexpr int kBindingEnd = kFirstBinding + kBindingCount;
 constexpr unsigned kQueueSize = 16;
 
 constexpr const char* kLearnIds[] = {"learn-play", "learn-stop", "learn-play-start"};
@@ -88,7 +90,7 @@ public:
         for (int action = 0; action < kBindingCount; ++action)
         {
             auto binding = mpc::intParam(kBindingIds[action], kBindingNames[action], 0,
-                                         kChannels * kControllers, kUnassigned);
+                                         2 * kMessageRange, kUnassigned);
             binding.automatable = false;
             addParam(binding);
         }
@@ -115,7 +117,12 @@ public:
             return;
         int action = index - kFirstLearn;
         if (value >= 0.5f)
+        {
             learnAction_.store(action);
+            for (int other = 0; other < kBindingCount; ++other)
+                if (other != action)
+                    clearLearn(other);
+        }
         else
             learnAction_.compare_exchange_strong(action, -1);
     }
@@ -123,17 +130,18 @@ public:
     bool formatValue(int index, float value, std::string& text) override
     {
         if (index >= kFirstLearn && index < kFirstBinding)
-            text = value >= 0.5f ? "Waiting" : "Learn";
-        else if (index >= kFirstBinding)
+            text = value >= 0.5f ? "Listening" : "Learn";
+        else if (index >= kFirstBinding && index < kBindingEnd)
         {
             const int binding = static_cast<int>(value);
             if (binding == kUnassigned)
                 text = "Unassigned";
             else
             {
-                const int key = binding - 1;
+                const bool note = binding > kMessageRange;
+                const int key = (binding - 1) % kMessageRange;
                 text = "Ch " + std::to_string(key / kControllers + 1) +
-                       " / CC " + std::to_string(key % kControllers);
+                       (note ? " / Note " : " / CC ") + std::to_string(key % kControllers);
             }
         }
         else
@@ -150,16 +158,21 @@ public:
         for (int index = 0; index < context.numMidiEvents; ++index)
         {
             const auto& midi = context.midi[index];
-            if (midi.size != 3 || !midi.isController() || midi.controller() >= kControllers)
-                continue;
-            const int key = midi.channel() * kControllers + midi.controller();
-            const bool down = midi.controllerValue() >= 64;
-            const bool wasDown = pressed_[key];
-            pressed_[key] = down;
-            if (!down || wasDown)
+            const bool cc = midi.isController();
+            if (midi.size != 3 || (!cc && !midi.isNoteOn()) || midi.data[1] >= kControllers)
                 continue;
 
-            const int binding = key + 1;
+            const int key = midi.channel() * kControllers + midi.data[1];
+            bool trigger = true;
+            if (cc)
+            {
+                const bool down = midi.controllerValue() >= 64;
+                trigger = down && !pressed_[key];
+                pressed_[key] = down;
+            }
+
+            // The lower half preserves the CC values stored by 0.1.0.
+            const int binding = 1 + key + (cc ? 0 : kMessageRange);
             const int learning = learnAction_.exchange(-1);
             if (learning >= 0)
             {
@@ -173,6 +186,8 @@ public:
                 continue;
             }
 
+            if (!trigger)
+                continue;
             for (int action = 0; action < kBindingCount; ++action)
                 if (getInt(kFirstBinding + action) == binding)
                 {
@@ -189,7 +204,7 @@ private:
         info.name = "MIDI Transport";
         info.vendor = "Elsewave";
         info.uniqueId = MPC_FOURCC('E', 'L', 'm', 't');
-        info.version = 100;
+        info.version = 101;
         info.isInstrument = true;
         info.numInputs = 0;
         info.numOutputs = 2;
@@ -245,7 +260,7 @@ private:
 
     std::atomic<int> learnAction_{-1};
     std::atomic<unsigned> changed_{0};
-    std::array<bool, kChannels * kControllers> pressed_{};
+    std::array<bool, kMessageRange> pressed_{};
     std::array<int, kQueueSize> queue_{};
     std::atomic<unsigned> read_{0};
     std::atomic<unsigned> write_{0};
