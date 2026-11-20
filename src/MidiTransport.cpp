@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <thread>
 
 #if defined(__linux__)
@@ -13,25 +14,42 @@
 
 namespace
 {
-constexpr int kBindingCount = 3;
+struct Button
+{
+    const char* name;
+    bool defaultToggle = false;
+};
+
+constexpr Button kButtons[] = {
+    {""}, {"STOP"}, {"PLAY"}, {"PLAY-START"}, {"REC"}, {"OVERDUB"}, {"TAP-TEMPO"}, {"UNDO"},
+    {"NOTE-REPEAT"}, {"FULL-LEVEL", true}, {"16-LEVEL", true},
+    {"BANK-A"}, {"BANK-B"}, {"BANK-C"}, {"BANK-D"},
+    {"MAIN"}, {"BROWSE"}, {"MENU"}, {"TRACK-MUTE"}, {"NEXT-SEQ"}, {"STEP-SEQ"}, {"SAMPLE-EDIT"},
+    {"PROG-EDIT"}, {"SHIFT"}, {"COPY"}, {"ERASE"}, {"QLINK"}, {"ENTER"}, {"MINUS"}, {"PLUS"},
+    {"UP"}, {"DOWN"}, {"LEFT"}, {"RIGHT"}
+};
+constexpr int kButtonSteps = std::size(kButtons);
+constexpr int kRowsPerPage = 8;
+constexpr int kPageCount = 5;
+constexpr int kMaxRows = kRowsPerPage * kPageCount;
 constexpr int kChannels = 16;
 constexpr int kControllers = 128;
 constexpr int kMessageRange = kChannels * kControllers;
-constexpr int kUnassigned = 0;
-constexpr int kFirstLearn = 1;
-constexpr int kFirstBinding = kFirstLearn + kBindingCount;
-constexpr int kBindingEnd = kFirstBinding + kBindingCount;
 constexpr unsigned kQueueSize = 16;
 
-constexpr const char* kLearnIds[] = {"learn-play", "learn-stop", "learn-play-start"};
-constexpr const char* kLearnNames[] = {"Learn Play", "Learn Stop", "Learn Play Start"};
-constexpr const char* kBindingIds[] = {"play-cc", "stop-cc", "play-start-cc"};
-constexpr const char* kBindingNames[] = {"Play CC", "Stop CC", "Play Start CC"};
+// The host nudges parameter zero when opening the plugin.
+enum Parameter { Reserved, RowCount, Page, AddRow, RemoveRow, OpenPicker, PickButton, FirstRow };
+enum RowField { Target, Learn, Binding, RowFields };
+constexpr int rowParam(int row, RowField field) { return FirstRow + row * RowFields + field; }
+constexpr int kPickerVisible = rowParam(kMaxRows, Target);
+constexpr int modeParam(int row) { return kPickerVisible + 1 + row; }
+constexpr int kParamCount = modeParam(kMaxRows);
+
+enum class InputState : uint8_t { Unseen, Released, Pressed };
 
 #if defined(__linux__)
 bool pressButton(int action)
 {
-    constexpr const char* names[] = {"PLAY", "STOP", "PLAY-START"};
     const int connection = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (connection < 0)
         return false;
@@ -47,7 +65,7 @@ bool pressButton(int action)
     char request[128];
     const auto length = static_cast<size_t>(std::snprintf(
         request, sizeof(request), "GET /button?name=%s HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n",
-        names[action]));
+        kButtons[action].name));
     for (size_t sent = 0; ok && sent < length;)
     {
         const auto count = send(connection, request + sent, length - sent, MSG_NOSIGNAL);
@@ -77,23 +95,30 @@ class MidiTransport final : public mpc::Plugin
 public:
     MidiTransport() : mpc::Plugin(makeInfo())
     {
-        // MPC nudges parameter 0 when opening a plugin.
-        auto reserved = mpc::boolParam("reserved", "Reserved", false);
-        reserved.automatable = false;
-        addParam(reserved);
-        for (int action = 0; action < kBindingCount; ++action)
+        addSetting(mpc::boolParam("reserved", "Reserved", false));
+        addSetting(mpc::intParam("row-count", "Row Count", 0, kMaxRows, 0));
+        addSetting(mpc::intParam("page", "Page", 0, kPageCount - 1, 0));
+        addSetting(mpc::boolParam("add-row", "Add Row", false));
+        addSetting(mpc::intParam("remove-row", "Remove Row", 0, kMaxRows, 0));
+        addSetting(mpc::intParam("open-picker", "Open Picker", 0, kMaxRows, 0));
+        addSetting(mpc::intParam("pick-button", "Pick Button", 0, kButtonSteps - 1, 0));
+        for (int row = 0; row < kMaxRows; ++row)
         {
-            auto learn = mpc::boolParam(kLearnIds[action], kLearnNames[action], false);
-            learn.automatable = false;
-            addParam(learn);
+            const auto number = std::to_string(row + 1);
+            addSetting(mpc::intParam(("target-" + number).c_str(), ("Target " + number).c_str(),
+                                     0, kButtonSteps - 1, 0));
+            addSetting(mpc::boolParam(("learn-" + number).c_str(), ("Learn " + number).c_str(), false));
+            addSetting(mpc::intParam(("binding-" + number).c_str(), ("Binding " + number).c_str(),
+                                     0, 2 * kMessageRange, 0));
         }
-        for (int action = 0; action < kBindingCount; ++action)
+        addSetting(mpc::boolParam("picker-visible", "Picker Visible", false));
+        for (int row = 0; row < kMaxRows; ++row)
         {
-            auto binding = mpc::intParam(kBindingIds[action], kBindingNames[action], 0,
-                                         2 * kMessageRange, kUnassigned);
-            binding.automatable = false;
-            addParam(binding);
+            const auto number = std::to_string(row + 1);
+            addSetting(mpc::boolParam(("toggle-" + number).c_str(), ("Toggle " + number).c_str(), false));
         }
+        for (auto& dirty : changed_)
+            dirty.store(false);
         worker_ = std::thread([this] { dispatchCommands(); });
     }
 
@@ -105,47 +130,87 @@ public:
 
     void reset() override
     {
-        pressed_.fill(false);
-        learnAction_.store(-1);
-        for (int action = 0; action < kBindingCount; ++action)
-            clearLearn(action);
+        inputStates_.fill(InputState::Unseen);
+        cancelLearn();
+        for (int row = 0; row < kMaxRows; ++row)
+            setDisplayed(rowParam(row, Learn), 0);
+        setDisplayed(OpenPicker, 0);
+        setDisplayed(kPickerVisible, 0);
+        setDisplayed(PickButton, 0);
     }
 
     void parameterChanged(int index, float value) override
     {
-        if (index < kFirstLearn || index >= kFirstBinding)
-            return;
-        int action = index - kFirstLearn;
-        if (value >= 0.5f)
+        const int step = static_cast<int>(value);
+        if (index == AddRow && step)
         {
-            learnAction_.store(action);
-            for (int other = 0; other < kBindingCount; ++other)
-                if (other != action)
-                    clearLearn(other);
+            const std::lock_guard<std::mutex> lock(rowsMutex_);
+            const int count = getInt(RowCount);
+            if (count < kMaxRows)
+            {
+                setDisplayed(RowCount, count + 1);
+                setDisplayed(Page, count / kRowsPerPage);
+            }
+            setDisplayed(AddRow, 0);
         }
-        else
-            learnAction_.compare_exchange_strong(action, -1);
+        else if (index == RemoveRow && step)
+        {
+            removeRow(step - 1);
+            setDisplayed(RemoveRow, 0);
+        }
+        else if (index == OpenPicker)
+            setDisplayed(kPickerVisible, step != 0);
+        else if (index == PickButton && step)
+        {
+            const std::lock_guard<std::mutex> lock(rowsMutex_);
+            const int row = getInt(OpenPicker) - 1;
+            if (row >= 0 && row < getInt(RowCount) && getInt(rowParam(row, Target)) != step)
+            {
+                setDisplayed(rowParam(row, Target), step);
+                setDisplayed(modeParam(row), kButtons[step].defaultToggle);
+            }
+            setDisplayed(OpenPicker, 0);
+            setDisplayed(PickButton, 0);
+        }
+        else if (index >= FirstRow && index < kPickerVisible && (index - FirstRow) % RowFields == Learn)
+        {
+            int row = (index - FirstRow) / RowFields;
+            if (step && row < getInt(RowCount))
+            {
+                const int previous = learnRow_.exchange(row);
+                if (previous >= 0 && previous != row)
+                    setDisplayed(rowParam(previous, Learn), 0);
+            }
+            else
+                learnRow_.compare_exchange_strong(row, -1);
+        }
     }
 
     bool formatValue(int index, float value, std::string& text) override
     {
-        if (index >= kFirstLearn && index < kFirstBinding)
-            text = value >= 0.5f ? "Listening" : "Learn";
-        else if (index >= kFirstBinding && index < kBindingEnd)
-        {
-            const int binding = static_cast<int>(value);
-            if (binding == kUnassigned)
-                text = "Unassigned";
-            else
-            {
-                const bool note = binding > kMessageRange;
-                const int key = (binding - 1) % kMessageRange;
-                text = "Ch " + std::to_string(key / kControllers + 1) +
-                       (note ? " / Note " : " / CC ") + std::to_string(key % kControllers);
-            }
-        }
-        else
+        if (index < FirstRow || index >= kPickerVisible)
             return false;
+        const int step = static_cast<int>(value);
+        switch ((index - FirstRow) % RowFields)
+        {
+            case Target:
+                text = step ? kButtons[step].name : "Choose control";
+                break;
+            case Learn:
+                text = step ? "Listening" : "Learn";
+                break;
+            case Binding:
+                if (step == 0)
+                    text = "Unassigned";
+                else
+                {
+                    const bool note = step > kMessageRange;
+                    const int key = (step - 1) % kMessageRange;
+                    text = "Ch " + std::to_string(key / kControllers + 1) +
+                           (note ? " / Note " : " / CC ") + std::to_string(key % kControllers);
+                }
+                break;
+        }
         return true;
     }
 
@@ -159,41 +224,46 @@ public:
         {
             const auto& midi = context.midi[index];
             const bool cc = midi.isController();
-            if (midi.size != 3 || (!cc && !midi.isNoteOn()) || midi.data[1] >= kControllers)
+            if (midi.size != 3 || (!cc && !midi.isNoteOn() && !midi.isNoteOff()) ||
+                midi.data[1] >= kControllers)
                 continue;
 
             const int key = midi.channel() * kControllers + midi.data[1];
-            bool trigger = true;
-            if (cc)
+            const int input = key + (cc ? 0 : kMessageRange);
+            const bool down = cc ? midi.controllerValue() >= 64 : midi.isNoteOn();
+            const auto state = down ? InputState::Pressed : InputState::Released;
+            const bool changed = inputStates_[input] != state;
+            inputStates_[input] = state;
+            const bool momentaryTrigger = down && (!cc || changed);
+            const int binding = input + 1;
+            const std::unique_lock<std::mutex> lock(rowsMutex_, std::try_to_lock);
+            if (!lock.owns_lock())
+                continue;
+            const int count = getInt(RowCount);
+            const int learning = learnRow_.load();
+            if (learning >= 0 && learning < count)
             {
-                const bool down = midi.controllerValue() >= 64;
-                trigger = down && !pressed_[key];
-                pressed_[key] = down;
-            }
-
-            // The lower half preserves the CC values stored by 0.1.0.
-            const int binding = 1 + key + (cc ? 0 : kMessageRange);
-            const int learning = learnAction_.exchange(-1);
-            if (learning >= 0)
-            {
-                for (int action = 0; action < kBindingCount; ++action)
+                if (getBool(modeParam(learning)) ? changed : momentaryTrigger)
                 {
-                    if (action != learning && getInt(kFirstBinding + action) == binding)
-                        setDisplayed(kFirstBinding + action, kUnassigned);
-                    clearLearn(action);
+                    for (int row = 0; row < count; ++row)
+                        if (row != learning && getInt(rowParam(row, Binding)) == binding)
+                            setDisplayed(rowParam(row, Binding), 0);
+                    setDisplayed(rowParam(learning, Binding), binding);
+                    setDisplayed(rowParam(learning, Learn), 0);
                 }
-                setDisplayed(kFirstBinding + learning, binding);
                 continue;
             }
 
-            if (!trigger)
-                continue;
-            for (int action = 0; action < kBindingCount; ++action)
-                if (getInt(kFirstBinding + action) == binding)
+            for (int row = 0; row < count; ++row)
+            {
+                const int target = getInt(rowParam(row, Target));
+                if (target && getInt(rowParam(row, Binding)) == binding)
                 {
-                    enqueue(action);
+                    if (getBool(modeParam(row)) ? changed : momentaryTrigger)
+                        enqueue(target);
                     break;
                 }
+            }
         }
     }
 
@@ -204,24 +274,54 @@ private:
         info.name = "MIDI Transport";
         info.vendor = "Elsewave";
         info.uniqueId = MPC_FOURCC('E', 'L', 'm', 't');
-        info.version = 101;
+        info.version = 1000;
         info.isInstrument = true;
         info.numInputs = 0;
         info.numOutputs = 2;
         return info;
     }
 
-    void clearLearn(int action)
+    void addSetting(mpc::Param param)
     {
-        const int index = kFirstLearn + action;
-        if (getBool(index))
-            setDisplayed(index, 0);
+        param.automatable = false;
+        addParam(param);
+    }
+
+    void cancelLearn()
+    {
+        const int row = learnRow_.exchange(-1);
+        if (row >= 0)
+            setDisplayed(rowParam(row, Learn), 0);
+    }
+
+    void removeRow(int row)
+    {
+        const std::lock_guard<std::mutex> lock(rowsMutex_);
+        const int count = getInt(RowCount);
+        if (row >= count)
+            return;
+
+        cancelLearn();
+        for (int next = row + 1; next < count; ++next)
+        {
+            setDisplayed(rowParam(next - 1, Target), getInt(rowParam(next, Target)));
+            setDisplayed(rowParam(next - 1, Binding), getInt(rowParam(next, Binding)));
+            setDisplayed(modeParam(next - 1), getBool(modeParam(next)));
+        }
+        setDisplayed(rowParam(count - 1, Target), 0);
+        setDisplayed(rowParam(count - 1, Binding), 0);
+        setDisplayed(modeParam(count - 1), 0);
+        setDisplayed(RowCount, count - 1);
+        setDisplayed(Page, std::min(getInt(Page), std::max(0, count - 2) / kRowsPerPage));
     }
 
     void setDisplayed(int index, int value)
     {
-        set(index, static_cast<float>(value));
-        changed_.fetch_or(1u << index, std::memory_order_release);
+        if (getInt(index) != value)
+        {
+            set(index, static_cast<float>(value));
+            changed_[index].store(true, std::memory_order_release);
+        }
     }
 
     void enqueue(int action)
@@ -239,9 +339,9 @@ private:
     {
         while (!stopping_.load())
         {
-            const auto changes = changed_.exchange(0, std::memory_order_acquire);
-            for (int index = kFirstLearn; index < numParams(); ++index)
-                if (changes & (1u << index))
+            for (int index = RowCount; index < kParamCount; ++index)
+                if (changed_[index].load(std::memory_order_relaxed) &&
+                    changed_[index].exchange(false, std::memory_order_acquire))
                     notifyHostParameterChanged(index);
 
             const unsigned read = read_.load(std::memory_order_relaxed);
@@ -258,9 +358,10 @@ private:
         }
     }
 
-    std::atomic<int> learnAction_{-1};
-    std::atomic<unsigned> changed_{0};
-    std::array<bool, kMessageRange> pressed_{};
+    std::atomic<int> learnRow_{-1};
+    std::mutex rowsMutex_;
+    std::array<std::atomic<bool>, kParamCount> changed_;
+    std::array<InputState, 2 * kMessageRange> inputStates_{};
     std::array<int, kQueueSize> queue_{};
     std::atomic<unsigned> read_{0};
     std::atomic<unsigned> write_{0};

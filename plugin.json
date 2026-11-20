@@ -1,7 +1,7 @@
 {
   "name": "MIDI Transport",
   "manufacturer": "Elsewave",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "format": "vst2",
   "kind": "instrument",
   "uid": "ELmt",
@@ -10,5 +10,6 @@
   "category": "Synth",
   "file32": "VST/midi-transport-arm32.so",
   "file64": "VST/midi-transport-arm64.so",
-  "description": "Learn MIDI CC or note assignments for the MPC's Play, Stop, and Play Start controls."
+  "description": "Learn MIDI CC or note assignments for MPC hardware button actions.",
+  "license": "MIT"
 }

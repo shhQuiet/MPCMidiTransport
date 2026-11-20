@@ -10,6 +10,7 @@ export MIDI_TRANSPORT_ZIG
 MIDI_TRANSPORT_ZIG=$(command -v "$ZIG")
 mkdir -p "$project/build" "$project/Content"
 cp "$MPC_SDK/LICENSE" "$project/Content/Akai-SDK-LICENSE.txt"
+cp "$project/LICENSE" "$project/Content/LICENSE.txt"
 
 compiler="$project/build/zig-sdk"
 cat > "$compiler" <<'SH'
