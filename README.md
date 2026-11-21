@@ -2,6 +2,8 @@
 
 MIDI Transport is a silent instrument plugin for the MPC X. It learns MIDI CC or note assignments for MPC hardware buttons and saves them in the project. It uses the Open MPC Remote add-in running on the same MPC to send the button presses.
 
+The ARMv7 build was tested on an original MPC X. The AArch64 build is available for Gen2 and awaits hardware testing.
+
 ## Use
 
 1. Install the plugin folder in `VST2 Plugins` on the plugin drive. The MPC needs firmware 3.10.1 or later, External Plugin Support, and [Open MPC Remote](https://github.com/jacob-sabella/mpc-addin-remote) on local port 6720. Open MPC Remote needs to know the buttons you choose.

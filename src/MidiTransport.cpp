@@ -274,7 +274,7 @@ private:
         info.name = "MIDI Transport";
         info.vendor = "Elsewave";
         info.uniqueId = MPC_FOURCC('E', 'L', 'm', 't');
-        info.version = 1000;
+        info.version = 1001;
         info.isInstrument = true;
         info.numInputs = 0;
         info.numOutputs = 2;
