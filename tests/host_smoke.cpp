@@ -120,12 +120,15 @@ int main(int argc, char** argv)
     {
         waitFor(plugin, "Picker Status", "3");
         assert(value(plugin, "Choice Name 1") == "STOP");
+        assert(value(plugin, "Choice Name 24") == "BUTTON-21");
+        assert(value(plugin, "Choice Visible 24") == "On");
+        assert(value(plugin, "Picker Position") == "Buttons 1–24 of 26");
         set(plugin, "Pick Button", 1.0f / 24);
     }
     else
     {
         waitFor(plugin, "Picker Status", "1");
-        assert(value(plugin, "Choice Count") == "0");
+        assert(value(plugin, "Choice Visible 1") == "Off");
         set(plugin, "Open Picker", 0);
         set(plugin, "Target 1", 1.0f / 35);
     }
@@ -161,7 +164,9 @@ int main(int argc, char** argv)
         waitFor(plugin, "Picker Status", "3");
         assert(value(plugin, "Picker More") == "On");
         set(plugin, "Picker Navigation", 1);
-        assert(value(plugin, "Choice Count") == "2");
+        assert(value(plugin, "Choice Visible 2") == "On");
+        assert(value(plugin, "Choice Visible 3") == "Off");
+        assert(value(plugin, "Picker Position") == "Buttons 25–26 of 26");
         assert(value(plugin, "Choice Name 1") == "MATRIX");
         assert(value(plugin, "Choice Name 2") == "CLIP");
         set(plugin, "Picker Navigation", 0.5f);

@@ -1,7 +1,7 @@
 {
   "name": "MIDI Transport",
   "manufacturer": "Elsewave",
-  "version": "1.0.3",
+  "version": "1.0.3.3",
   "format": "vst2",
   "kind": "instrument",
   "uid": "ELmt",

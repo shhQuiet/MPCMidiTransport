@@ -50,8 +50,9 @@ constexpr int rowParam(int row, RowField field) { return FirstRow + row * RowFie
 constexpr int kPickerVisible = rowParam(kMaxRows, Target);
 constexpr int modeParam(int row) { return kPickerVisible + 1 + row; }
 enum PickerParameter {
-    PickerStatus = modeParam(kMaxRows), ChoiceCount, PickerBack, PickerMore,
-    PickerNavigation, FirstChoiceName, ParamCount = FirstChoiceName + kChoicesPerPage
+    PickerStatus = modeParam(kMaxRows), PickerPosition, PickerBack, PickerMore,
+    PickerNavigation, FirstChoiceName, FirstChoiceVisible = FirstChoiceName + kChoicesPerPage,
+    ParamCount = FirstChoiceVisible + kChoicesPerPage
 };
 enum class DiscoveryStatus { Loading, Unavailable, Empty, Ready };
 
@@ -192,7 +193,7 @@ public:
             addSetting(mpc::boolParam(("toggle-" + number).c_str(), ("Toggle " + number).c_str(), false));
         }
         addSetting(mpc::intParam("picker-status", "Picker Status", 0, 3, 0));
-        addSetting(mpc::intParam("choice-count", "Choice Count", 0, kChoicesPerPage, 0));
+        addSetting(mpc::boolParam("picker-position", "Picker Position", false));
         addSetting(mpc::boolParam("picker-back", "Picker Back", false));
         addSetting(mpc::boolParam("picker-more", "Picker More", false));
         addSetting(mpc::intParam("picker-navigation", "Picker Navigation", 0, 2, 0));
@@ -200,6 +201,11 @@ public:
         {
             const auto number = std::to_string(slot + 1);
             addSetting(mpc::boolParam(("choice-name-" + number).c_str(), ("Choice Name " + number).c_str(), false));
+        }
+        for (int slot = 0; slot < kChoicesPerPage; ++slot)
+        {
+            const auto number = std::to_string(slot + 1);
+            addSetting(mpc::boolParam(("choice-visible-" + number).c_str(), ("Choice Visible " + number).c_str(), false));
         }
         for (auto& dirty : changed_)
             dirty.store(false);
@@ -301,7 +307,21 @@ public:
 
     bool formatValue(int index, float value, std::string& text) override
     {
-        if (index >= FirstChoiceName && index < ParamCount)
+        if (index == PickerPosition)
+        {
+            const std::lock_guard<std::mutex> lock(pickerMutex_);
+            if (availableButtons_.empty())
+                text.clear();
+            else
+            {
+                const auto offset = pickerPage_ * kChoicesPerPage;
+                const auto end = std::min(offset + kChoicesPerPage, availableButtons_.size());
+                text = "Buttons " + std::to_string(offset + 1) + "–" + std::to_string(end)
+                    + " of " + std::to_string(availableButtons_.size());
+            }
+            return true;
+        }
+        if (index >= FirstChoiceName && index < FirstChoiceVisible)
         {
             const std::lock_guard<std::mutex> lock(pickerMutex_);
             const auto choice = pickerPage_ * kChoicesPerPage + static_cast<size_t>(index - FirstChoiceName);
@@ -422,7 +442,7 @@ private:
         info.name = "MIDI Transport";
         info.vendor = "Elsewave";
         info.uniqueId = MPC_FOURCC('E', 'L', 'm', 't');
-        info.version = 1003;
+        info.version = 1005;
         info.isInstrument = true;
         info.numInputs = 0;
         info.numOutputs = 2;
@@ -473,8 +493,11 @@ private:
         const auto offset = pickerPage_ * kChoicesPerPage;
         const auto count = std::min(availableButtons_.size() - offset, static_cast<size_t>(kChoicesPerPage));
         for (int slot = 0; slot < kChoicesPerPage; ++slot)
+        {
             setDisplayed(FirstChoiceName + slot, !getBool(FirstChoiceName + slot));
-        setDisplayed(ChoiceCount, static_cast<int>(count));
+            setDisplayed(FirstChoiceVisible + slot, static_cast<size_t>(slot) < count);
+        }
+        setDisplayed(PickerPosition, !getBool(PickerPosition));
         setDisplayed(PickerBack, pickerPage_ != 0);
         setDisplayed(PickerMore, offset + count < availableButtons_.size());
     }

@@ -13,6 +13,8 @@ ROWS_PER_PAGE = 8
 BUTTON_HEIGHT = 54
 ACTION_WIDTH = 264
 BINDING_STEPS = 1 + 2 * 16 * 128
+CHOICE_WIDTH = 289
+CHOICE_HEIGHT = 68
 
 
 def field(obj, key):
@@ -55,7 +57,7 @@ def bind_skin(project, skins, sdk):
         controls.append(ui.entry(name, "Label", data, " ".join(map(str, rect)),
                                  "No", "Hide", "Always", remap=remap, invalidating=visible))
 
-    def artwork(name, caption, width, height=BUTTON_HEIGHT, accent=False, chevron=False):
+    def artwork(name, caption, width, height=BUTTON_HEIGHT, accent=False, chevron=False, arrow=0):
         image = Image.new("RGBA", (width, height))
         draw = ImageDraw.Draw(image)
         fill, edge, ink = ("#64d9d6", "#64d9d6", "#10171b") if accent else (
@@ -65,11 +67,16 @@ def bind_skin(project, skins, sdk):
             x, y = width // 2, height // 2
             draw.line((x - 9, y, x + 9, y), fill=ink, width=2)
         else:
-            draw.text((width // 2, height // 2), caption, font=ImageFont.load_default(size=24),
+            draw.text((width // 2 - (10 if arrow else 0), height // 2), caption,
+                      font=ImageFont.load_default(size=24),
                       fill=ink, anchor="mm")
         if chevron:
             x, y = width - 26, height // 2
             draw.polygon([(x - 7, y - 4), (x + 7, y - 4), (x, y + 5)], fill=ink)
+        if arrow:
+            x, y = width - 24, height // 2
+            draw.line([(x - 7, y - arrow * 4), (x, y + arrow * 3), (x + 7, y - arrow * 4)],
+                      fill=ink, width=3)
         png = name + ".png"
         image.save(skins / png)
         return png
@@ -138,33 +145,36 @@ def bind_skin(project, skins, sdk):
           size=21, colour="ffd1d8df")
     button("Cancel picker", "Open Picker", (1088, 18, 152, BUTTON_HEIGHT), cancel, [],
            step=0, steps=row_count + 1)
-    previous = artwork("choice-previous", "Previous", 146)
-    following = artwork("choice-next", "Next", 146)
-    button("Previous buttons", "Picker Navigation", (770, 18, 146, BUTTON_HEIGHT), previous,
+    previous = artwork("choice-previous", "Previous", 190, arrow=-1)
+    following = artwork("choice-next", "More buttons", 190, arrow=1)
+    button("Previous buttons", "Picker Navigation", (844, 552, 190, BUTTON_HEIGHT), previous,
            [indexed("Picker Back", 1, 2)], step=1, steps=3)
-    button("More buttons", "Picker Navigation", (928, 18, 146, BUTTON_HEIGHT), following,
+    button("More buttons", "Picker Navigation", (1050, 552, 190, BUTTON_HEIGHT), following,
            [indexed("Picker More", 1, 2)], step=2, steps=3)
+    label("Button list position", (40, 552, 650, BUTTON_HEIGHT),
+          [indexed("Picker Status", 3, 4)], handle="Picker Position", size=23, colour="ffd1d8df")
     for status, message in enumerate(("Reading hardware buttons…",
                                       "Open MPC Remote is unavailable on port 6720",
                                       "Open MPC Remote reported no buttons for this device")):
         label("Discovery status " + str(status), (40, 110, 1200, 52),
               [indexed("Picker Status", status, 4)], text=message)
 
-    choice = artwork("choice", "", 289, 52)
+    choice = artwork("choice", "", CHOICE_WIDTH, CHOICE_HEIGHT)
     choice_image = ui.obj(("version", 2), ("imageType", "Regular"),
                           ("colour", "0"), ("image", choice))
     choice_hit = "choice-hit.png"
-    Image.new("RGBA", (289, 52), (0, 0, 0, 1)).save(skins / choice_hit)
+    Image.new("RGBA", (CHOICE_WIDTH, CHOICE_HEIGHT), (0, 0, 0, 1)).save(skins / choice_hit)
     for step in range(1, choice_count + 1):
         column, row = (step - 1) % 4, (step - 1) // 4
-        x, y = 40 + column * 304, 87 + row * 72
-        visible = [indexed("Picker Status", 3, 4),
-                   f"RangedEnabling/{step}/{choice_count}/{choice_count + 1}/{handles['Choice Count']}"]
+        x, y = 40 + column * 304, 87 + row * 76
+        bounds = (x, y, CHOICE_WIDTH, CHOICE_HEIGHT)
+        visible = [indexed("Picker Status", 3, 4), indexed(f"Choice Visible {step}", 1, 2)]
         controls.append(ui.entry(f"Choice field {step}", "Image", choice_image,
-                                 f"{x} {y} 289 52", "No", "Show", "Always",
+                                 " ".join(map(str, bounds)), "No", "Show", "Always",
                                  invalidating=visible))
-        label(f"Button name {step}", (x + 15, y, 259, 52), visible, handle=f"Choice Name {step}")
-        button(f"Select choice {step}", "Pick Button", (x, y, 289, 52), choice_hit,
+        label(f"Button name {step}", (x + 15, y, CHOICE_WIDTH - 30, CHOICE_HEIGHT),
+              visible, handle=f"Choice Name {step}")
+        button(f"Select choice {step}", "Pick Button", bounds, choice_hit,
                visible, step=step, steps=choice_count + 1)
 
     path = skins / "TUI.json"
