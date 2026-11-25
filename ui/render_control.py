@@ -32,8 +32,8 @@ def bind_skin(project, skins, sdk):
     handles = {p["name"]: f'Parameter {p["index"]}' for p in params}
     row_count = sum(p["name"].startswith("Target ") for p in params)
     page_count = row_count // ROWS_PER_PAGE
-    actions = next(p["choices"] for p in params if p["name"] == "Target 1")
-    assert row_count % ROWS_PER_PAGE == 0 and actions[0] == "Choose control"
+    choice_count = sum(p["name"].startswith("Choice Name ") for p in params)
+    assert row_count % ROWS_PER_PAGE == 0 and choice_count > 0
     controls = []
 
     def indexed(name, step, count):
@@ -131,18 +131,41 @@ def bind_skin(project, skins, sdk):
     mapping_controls, controls = controls, []
     background = Image.new("RGB", (1280, 628), "#" + BACKGROUND[2:])
     draw = ImageDraw.Draw(background)
-    draw.text((40, 27), "Choose an MPC control", font=ImageFont.load_default(size=28),
+    draw.text((40, 27), "Choose a hardware button", font=ImageFont.load_default(size=28),
               fill="#" + TEXT[2:])
     background.save(skins / "picker-background.png")
-    label("Editing row", (361, 24, 600, 40), [], handle="Open Picker",
+    label("Editing row", (394, 24, 274, 40), [], handle="Open Picker",
           size=21, colour="ffd1d8df")
     button("Cancel picker", "Open Picker", (1088, 18, 152, BUTTON_HEIGHT), cancel, [],
            step=0, steps=row_count + 1)
-    for step, action in enumerate(actions[1:], 1):
+    previous = artwork("choice-previous", "Previous", 146)
+    following = artwork("choice-next", "Next", 146)
+    button("Previous buttons", "Picker Navigation", (770, 18, 146, BUTTON_HEIGHT), previous,
+           [indexed("Picker Back", 1, 2)], step=1, steps=3)
+    button("More buttons", "Picker Navigation", (928, 18, 146, BUTTON_HEIGHT), following,
+           [indexed("Picker More", 1, 2)], step=2, steps=3)
+    for status, message in enumerate(("Reading hardware buttons…",
+                                      "Open MPC Remote is unavailable on port 6720",
+                                      "Open MPC Remote reported no buttons for this device")):
+        label("Discovery status " + str(status), (40, 110, 1200, 52),
+              [indexed("Picker Status", status, 4)], text=message)
+
+    choice = artwork("choice", "", 289, 52)
+    choice_image = ui.obj(("version", 2), ("imageType", "Regular"),
+                          ("colour", "0"), ("image", choice))
+    choice_hit = "choice-hit.png"
+    Image.new("RGBA", (289, 52), (0, 0, 0, 1)).save(skins / choice_hit)
+    for step in range(1, choice_count + 1):
         column, row = (step - 1) % 4, (step - 1) // 4
-        png = artwork(f"choice-{step}", action, 289, 52)
-        button(f"Select {action}", "Pick Button", (40 + column * 304, 83 + row * 58, 289, 52),
-               png, [], step=step, steps=len(actions))
+        x, y = 40 + column * 304, 87 + row * 72
+        visible = [indexed("Picker Status", 3, 4),
+                   f"RangedEnabling/{step}/{choice_count}/{choice_count + 1}/{handles['Choice Count']}"]
+        controls.append(ui.entry(f"Choice field {step}", "Image", choice_image,
+                                 f"{x} {y} 289 52", "No", "Show", "Always",
+                                 invalidating=visible))
+        label(f"Button name {step}", (x + 15, y, 259, 52), visible, handle=f"Choice Name {step}")
+        button(f"Select choice {step}", "Pick Button", (x, y, 289, 52), choice_hit,
+               visible, step=step, steps=choice_count + 1)
 
     path = skins / "TUI.json"
     skin = json.loads(path.read_text(), object_pairs_hook=ui.Obj)

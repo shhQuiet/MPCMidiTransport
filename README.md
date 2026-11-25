@@ -1,8 +1,8 @@
 # MIDI Transport
 
-MIDI Transport is a silent instrument plugin for the MPC X. It learns MIDI CC or note assignments for MPC hardware buttons and saves them in the project. It uses the Open MPC Remote add-in running on the same MPC to send the button presses.
+MIDI Transport is a silent instrument plugin for MPC and Force. It learns MIDI CC or note assignments for hardware buttons and saves them in the project. It uses the Open MPC Remote add-in running on the same device to send the button presses.
 
-The ARMv7 build was tested on an original MPC X. The AArch64 build is available for Gen2 and awaits hardware testing.
+The stable ARMv7 build was tested on an original MPC X. Dynamic button discovery is experimental. The Force and Gen2 builds await hardware testing.
 
 ## Use
 
@@ -13,12 +13,14 @@ The ARMv7 build was tested on an original MPC X. The AArch64 build is available 
 
 The plugin receives the MIDI channel and CC as delivered by the MPC track. CC events played back on that track can also trigger the assigned action.
 
-The chooser includes 33 button commands. MIDI Transport sends short button presses, and the Open MPC Remote button profile determines which physical buttons each command operates on your model. The QLINK entry is a button press. It does not turn a knob. Controls that require a hold or a button combination may have limited behavior.
+The chooser reads the button list from Open MPC Remote when opened. The list depends on the active button profile. MIDI Transport sends short button presses. Controls that require a hold or a button combination may have limited behavior. Clip recording depends on the current clip selection and the device's recording settings.
 
 ## Build
 
 Set `MPC_SDK` to the Akai MPC Plugin Builder SDK and run `sh build.sh`. Set `ZIG` or `PYTHON` to select the installed tools.
 
 To test the native build on macOS or Linux, compile `tests/host_smoke.cpp` with a C++17 compiler and `-I "$MPC_SDK/framework" -ldl`, then run the resulting executable with the native plugin from `build/native` as its argument.
+
+To test discovery and button dispatch, run `python3 tests/remote_smoke.py <host-smoke> <native-plugin>` on a computer where local port 6720 is free.
 
 MIDI Transport is MIT licensed. The Akai SDK dependency has its own license.

@@ -1,11 +1,13 @@
 #include "mpc_vst2_abi.h"
 
 #include <cassert>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace
@@ -55,6 +57,18 @@ std::string value(AEffect* plugin, const char* name)
     return buffer;
 }
 
+void waitFor(AEffect* plugin, const char* name, const char* expected)
+{
+    for (int retry = 0; retry < 100; ++retry)
+    {
+        if (value(plugin, name) == expected)
+            return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    std::fprintf(stderr, "%s was %s, expected %s\n", name, value(plugin, name).c_str(), expected);
+    std::abort();
+}
+
 void deliver(AEffect* plugin, int status = 0, int number = 0, int value = 0)
 {
     if (status)
@@ -81,7 +95,10 @@ void deliver(AEffect* plugin, int status = 0, int number = 0, int value = 0)
 
 int main(int argc, char** argv)
 {
-    if (argc != 2)
+    if (argc < 2 || argc > 3)
+        return 2;
+    const bool remote = argc == 3 && std::strcmp(argv[2], "--remote") == 0;
+    if (argc == 3 && !remote)
         return 2;
     void* library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     if (!library)
@@ -99,7 +116,19 @@ int main(int argc, char** argv)
     set(plugin, "Add Row", 1);
     set(plugin, "Add Row", 1);
     set(plugin, "Open Picker", 1.0f / 40);
-    set(plugin, "Pick Button", 1.0f / 33);
+    if (remote)
+    {
+        waitFor(plugin, "Picker Status", "3");
+        assert(value(plugin, "Choice Name 1") == "STOP");
+        set(plugin, "Pick Button", 1.0f / 24);
+    }
+    else
+    {
+        waitFor(plugin, "Picker Status", "1");
+        assert(value(plugin, "Choice Count") == "0");
+        set(plugin, "Open Picker", 0);
+        set(plugin, "Target 1", 1.0f / 35);
+    }
     assert(value(plugin, "Target 1") == "STOP");
     set(plugin, "Learn 1", 1);
     deliver(plugin, 0xB2, 104, 0);
@@ -107,13 +136,43 @@ int main(int argc, char** argv)
     deliver(plugin, 0xB2, 104, 127);
     assert(value(plugin, "Binding 1") == "Ch 3 / CC 104");
 
-    set(plugin, "Open Picker", 2.0f / 40);
-    set(plugin, "Pick Button", 9.0f / 33);
+    if (remote)
+    {
+        set(plugin, "Open Picker", 2.0f / 40);
+        waitFor(plugin, "Picker Status", "3");
+        assert(value(plugin, "Choice Name 2") == "FULL-LEVEL");
+        set(plugin, "Pick Button", 2.0f / 24);
+    }
+    else
+    {
+        set(plugin, "Target 2", 9.0f / 35);
+        set(plugin, "Toggle 2", 1);
+    }
     assert(value(plugin, "Target 2") == "FULL-LEVEL");
     assert(value(plugin, "Toggle 2") == "On");
     set(plugin, "Learn 2", 1);
     deliver(plugin, 0x92, 60, 127);
     assert(value(plugin, "Binding 2") == "Ch 3 / Note 60");
+
+    if (remote)
+    {
+        set(plugin, "Add Row", 1);
+        set(plugin, "Open Picker", 3.0f / 40);
+        waitFor(plugin, "Picker Status", "3");
+        assert(value(plugin, "Picker More") == "On");
+        set(plugin, "Picker Navigation", 1);
+        assert(value(plugin, "Choice Count") == "2");
+        assert(value(plugin, "Choice Name 1") == "MATRIX");
+        assert(value(plugin, "Choice Name 2") == "CLIP");
+        set(plugin, "Picker Navigation", 0.5f);
+        assert(value(plugin, "Choice Name 1") == "STOP");
+        set(plugin, "Picker Navigation", 1);
+        set(plugin, "Pick Button", 1.0f / 24);
+        assert(value(plugin, "Target 3") == "MATRIX");
+        set(plugin, "Learn 3", 1);
+        deliver(plugin, 0x90, 61, 127);
+        assert(value(plugin, "Binding 3") == "Ch 1 / Note 61");
+    }
 
     set(plugin, "Learn 1", 1);
     set(plugin, "Open Picker", 2.0f / 40);
@@ -136,11 +195,19 @@ int main(int argc, char** argv)
     assert(value(restored, "Target 2") == "FULL-LEVEL");
     assert(value(restored, "Toggle 2") == "On");
     assert(value(restored, "Binding 2") == "Ch 3 / Note 60");
+    if (remote)
+    {
+        assert(value(restored, "Target 3") == "MATRIX");
+        deliver(restored, 0x90, 61, 127);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
     set(restored, "Remove Row", 1.0f / 40);
     assert(value(restored, "Target 1") == "FULL-LEVEL");
     assert(value(restored, "Toggle 1") == "On");
     assert(value(restored, "Binding 1") == "Ch 3 / Note 60");
-    assert(value(restored, "Binding 2") == "Unassigned");
+    assert(value(restored, "Binding 2") == (remote ? "Ch 1 / Note 61" : "Unassigned"));
+    if (remote)
+        assert(value(restored, "Target 2") == "MATRIX");
     close(restored);
     dlclose(library);
     std::puts("PASS VST load, silent output, MIDI Learn, mode defaults, saved mappings, transient reset, row removal");
